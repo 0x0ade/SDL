@@ -675,3 +675,8 @@
 #define SDL_IsChromebook SDL_IsChromebook_REAL
 #define SDL_IsDeXMode SDL_IsDeXMode_REAL
 #define SDL_AndroidBackButton SDL_AndroidBackButton_REAL
+#define SDL_exp SDL_exp_REAL
+#define SDL_expf SDL_expf_REAL
+#define SDL_wcsdup SDL_wcsdup_REAL
+#define SDL_GameControllerRumble SDL_GameControllerRumble_REAL
+#define SDL_JoystickRumble SDL_JoystickRumble_REAL
