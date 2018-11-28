@@ -18,30 +18,43 @@
      misrepresented as being the original software.
   3. This notice may not be removed or altered from any source distribution.
 */
+#include "../SDL_internal.h"
 
-/*
-  Contributed by Brandon Schaefer, <brandon.schaefer@canonical.com>
-*/
+/* Display event handling code for SDL */
 
-#ifndef SDL_mirframebuffer_h_
-#define SDL_mirframebuffer_h_
+#include "SDL_events.h"
+#include "SDL_events_c.h"
 
-#include "../SDL_sysvideo.h"
 
-#include "SDL_mirvideo.h"
+int
+SDL_SendDisplayEvent(SDL_VideoDisplay *display, Uint8 displayevent, int data1)
+{
+    int posted;
 
-extern int
-MIR_CreateWindowFramebuffer(_THIS, SDL_Window* sdl_window, Uint32* format,
-                            void** pixels, int* pitch);
+    if (!display) {
+        return 0;
+    }
+    switch (displayevent) {
+    case SDL_DISPLAYEVENT_ORIENTATION:
+        if (data1 == SDL_ORIENTATION_UNKNOWN || data1 == display->orientation) {
+            return 0;
+        }
+        display->orientation = (SDL_DisplayOrientation)data1;
+        break;
+    }
 
-extern int
-MIR_UpdateWindowFramebuffer(_THIS, SDL_Window* sdl_window,
-                            const SDL_Rect* rects, int numrects);
+    /* Post the event, if desired */
+    posted = 0;
+    if (SDL_GetEventState(SDL_DISPLAYEVENT) == SDL_ENABLE) {
+        SDL_Event event;
+        event.type = SDL_DISPLAYEVENT;
+        event.display.event = displayevent;
+        event.display.display = SDL_GetIndexOfDisplay(display);
+        event.display.data1 = data1;
+        posted = (SDL_PushEvent(&event) > 0);
+    }
 
-extern void
-MIR_DestroyWindowFramebuffer(_THIS, SDL_Window* sdl_window);
-
-#endif /* SDL_mirframebuffer_h_ */
+    return (posted);
+}
 
 /* vi: set ts=4 sw=4 expandtab: */
-

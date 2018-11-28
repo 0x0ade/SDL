@@ -18,36 +18,13 @@
      misrepresented as being the original software.
   3. This notice may not be removed or altered from any source distribution.
 */
+#include "../SDL_internal.h"
 
-#ifndef SDL_mirdyn_h_
-#define SDL_mirdyn_h_
+#ifndef SDL_displayevents_c_h_
+#define SDL_displayevents_c_h_
 
-#include "../../SDL_internal.h"
+extern int SDL_SendDisplayEvent(SDL_VideoDisplay *display, Uint8 displayevent, int data1);
 
-#include <EGL/egl.h>
-#include <mir_toolkit/mir_client_library.h>
-#include <xkbcommon/xkbcommon.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-int SDL_MIR_LoadSymbols(void);
-void SDL_MIR_UnloadSymbols(void);
-
-/* Declare all the function pointers and wrappers... */
-#define SDL_MIR_SYM(rc,fn,params) \
-    typedef rc (*SDL_DYNMIRFN_##fn) params; \
-    extern SDL_DYNMIRFN_##fn MIR_##fn;
-#define SDL_MIR_SYM_CONST(type, name) \
-    typedef type SDL_DYMMIRCONST_##name; \
-    extern SDL_DYMMIRCONST_##name MIR_##name;
-#include "SDL_mirsym.h"
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif /* !defined SDL_mirdyn_h_ */
+#endif /* SDL_displayevents_c_h_ */
 
 /* vi: set ts=4 sw=4 expandtab: */

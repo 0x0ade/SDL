@@ -19,6 +19,9 @@
  code repository located at:
  http://github.com/signal11/hidapi .
  ********************************************************/
+#include "../../SDL_internal.h"
+
+#ifdef SDL_JOYSTICK_HIDAPI
 
 /* See Apple Technical Note TN2187 for details on IOHidManager. */
 
@@ -291,7 +294,7 @@ static int get_string_property(IOHIDDeviceRef device, CFStringRef prop, wchar_t 
 										&used_buf_len);
 		
 		buf[chars_copied] = 0;
-		return chars_copied;
+		return (int)chars_copied;
 	}
 	else
 		return 0;
@@ -327,7 +330,7 @@ static int get_string_property_utf8(IOHIDDeviceRef device, CFStringRef prop, cha
 										&used_buf_len);
 		
 		buf[chars_copied] = 0;
-		return used_buf_len;
+		return (int)used_buf_len;
 	}
 	else
 		return 0;
@@ -835,7 +838,7 @@ static int set_report(hid_device *dev, IOHIDReportType type, const unsigned char
 								   data_to_send, length_to_send);
 		
 		if (res == kIOReturnSuccess) {
-			return length;
+			return (int)length;
 		}
 		else if (res == kIOReturnUnsupported) {
 			/*printf("kIOReturnUnsupported\n");*/
@@ -866,7 +869,7 @@ static int return_data(hid_device *dev, unsigned char *data, size_t length)
 	dev->input_reports = rpt->next;
 	free(rpt->data);
 	free(rpt);
-	return len;
+	return (int)len;
 }
 
 static int cond_wait(const hid_device *dev, pthread_cond_t *cond, pthread_mutex_t *mutex)
@@ -1031,7 +1034,7 @@ int HID_API_EXPORT hid_get_feature_report(hid_device *dev, unsigned char *data, 
 	if (skipped_report_id)
 		len++;
 
-	return len;
+	return (int)len;
 }
 
 
@@ -1184,3 +1187,5 @@ int main(void)
 	return 0;
 }
 #endif
+
+#endif /* SDL_JOYSTICK_HIDAPI */

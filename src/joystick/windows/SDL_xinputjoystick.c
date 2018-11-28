@@ -259,14 +259,12 @@ AddXInputDevice(Uint8 userid, BYTE SubType, JoyStick_DeviceData **pContext)
         return;
     }
 
-#if 0 /* There's no controller that's supported by both XInput and HIDAPI */
 #ifdef SDL_JOYSTICK_HIDAPI
-    if (HIDAPI_IsDevicePresent(vendor, product)) {
+    if (HIDAPI_IsDevicePresent(vendor, product, version)) {
         /* The HIDAPI driver is taking care of this device */
         SDL_free(pNewJoystick);
         return;
     }
-#endif
 #endif
 
     WINDOWS_AddJoystickDevice(pNewJoystick);
@@ -313,6 +311,8 @@ SDL_XINPUT_JoystickOpen(SDL_Joystick * joystick, JoyStick_DeviceData *joystickde
     SDL_assert(XINPUTGETCAPABILITIES);
     SDL_assert(XINPUTSETSTATE);
     SDL_assert(userId < XUSER_MAX_COUNT);
+
+    joystick->player_index = userId;
 
     joystick->hwdata->bXInputDevice = SDL_TRUE;
 

@@ -18,36 +18,13 @@
      misrepresented as being the original software.
   3. This notice may not be removed or altered from any source distribution.
 */
+#include "SDL_config.h"
 
-/*
-  Contributed by Brandon Schaefer, <brandon.schaefer@canonical.com>
-*/
+/* The private structure used to keep track of a sensor */
+struct sensor_hwdata
+{
+    float data[3];
+};
 
-#ifndef SDL_miropengl_h_
-#define SDL_miropengl_h_
-
-#include "SDL_mirwindow.h"
-
-#include "../SDL_egl_c.h"
-
-#define MIR_GL_DeleteContext   SDL_EGL_DeleteContext
-#define MIR_GL_GetSwapInterval SDL_EGL_GetSwapInterval
-#define MIR_GL_SetSwapInterval SDL_EGL_SetSwapInterval
-#define MIR_GL_UnloadLibrary   SDL_EGL_UnloadLibrary
-#define MIR_GL_GetProcAddress  SDL_EGL_GetProcAddress
-
-extern int
-MIR_GL_SwapWindow(_THIS, SDL_Window* window);
-
-extern int
-MIR_GL_MakeCurrent(_THIS, SDL_Window* window, SDL_GLContext context);
-
-extern SDL_GLContext
-MIR_GL_CreateContext(_THIS, SDL_Window* window);
-
-extern int
-MIR_GL_LoadLibrary(_THIS, const char* path);
-
-#endif /* SDL_miropengl_h_ */
 
 /* vi: set ts=4 sw=4 expandtab: */

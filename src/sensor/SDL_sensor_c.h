@@ -19,31 +19,26 @@
   3. This notice may not be removed or altered from any source distribution.
 */
 
-/*
-  Contributed by Brandon Schaefer, <brandon.schaefer@canonical.com>
-*/
+#ifndef SDL_sensor_c_h_
+#define SDL_sensor_c_h_
 
-#ifndef SDL_mirvideo_h__
-#define SDL_mirvideo_h__
+#include "SDL_config.h"
 
-#include <EGL/egl.h>
-#include <mir_toolkit/mir_client_library.h>
-#include "SDL_stdinc.h"
+struct _SDL_SensorDriver;
 
-typedef struct MIR_Window MIR_Window;
+/* Useful functions and variables from SDL_sensor.c */
+#include "SDL_sensor.h"
 
-typedef struct
-{
-    MirConnection*    connection;
-    MirDisplayConfig* display_config;
-    MIR_Window*       current_window;
-    SDL_bool          software;
-    MirPixelFormat    pixel_format;
-} MIR_Data;
+/* Function to get the next available sensor instance ID */
+extern SDL_SensorID SDL_GetNextSensorInstanceID(void);
 
-extern Uint32
-MIR_GetSDLPixelFormat(MirPixelFormat format);
+/* Initialization and shutdown functions */
+extern int SDL_SensorInit(void);
+extern void SDL_SensorQuit(void);
 
-#endif /* SDL_mirvideo_h__ */
+/* Internal event queueing functions */
+extern int SDL_PrivateSensorUpdate(SDL_Sensor *sensor, float *data, int num_values);
+
+#endif /* SDL_sensor_c_h_ */
 
 /* vi: set ts=4 sw=4 expandtab: */

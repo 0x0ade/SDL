@@ -111,7 +111,6 @@ struct _SDL_GameController
     SDL_Joystick *joystick; /* underlying joystick device */
     int ref_count;
 
-    SDL_JoystickGUID guid;
     const char *name;
     int num_bindings;
     SDL_ExtendedGameControllerBind *bindings;
@@ -203,13 +202,14 @@ static void UpdateEventsForDeviceRemoval()
 {
     int i, num_events;
     SDL_Event *events;
+    SDL_bool isstack;
 
     num_events = SDL_PeepEvents(NULL, 0, SDL_PEEKEVENT, SDL_CONTROLLERDEVICEADDED, SDL_CONTROLLERDEVICEADDED);
     if (num_events <= 0) {
         return;
     }
 
-    events = SDL_stack_alloc(SDL_Event, num_events);
+    events = SDL_small_alloc(SDL_Event, num_events, &isstack);
     if (!events) {
         return;
     }
@@ -220,7 +220,7 @@ static void UpdateEventsForDeviceRemoval()
     }
     SDL_PeepEvents(events, num_events, SDL_ADDEVENT, 0, 0);
 
-    SDL_stack_free(events);
+    SDL_small_free(events, isstack);
 }
 
 static SDL_bool HasSameOutput(SDL_ExtendedGameControllerBind *a, SDL_ExtendedGameControllerBind *b)
@@ -422,7 +422,7 @@ static int SDLCALL SDL_GameControllerEventWatcher(void *userdata, SDL_Event * ev
 /*
  * Helper function to scan the mappings database for a controller with the specified GUID
  */
-static ControllerMapping_t *SDL_PrivateGetControllerMappingForGUID(SDL_JoystickGUID *guid)
+static ControllerMapping_t *SDL_PrivateGetControllerMappingForGUID(SDL_JoystickGUID *guid, SDL_bool exact_match)
 {
     ControllerMapping_t *pSupportedController = s_pSupportedControllers;
     while (pSupportedController) {
@@ -431,16 +431,18 @@ static ControllerMapping_t *SDL_PrivateGetControllerMappingForGUID(SDL_JoystickG
         }
         pSupportedController = pSupportedController->next;
     }
-    if (guid->data[14] == 'h') {
-        /* This is a HIDAPI device */
-        return s_pHIDAPIMapping;
-    }
+    if (!exact_match) {
+        if (SDL_IsJoystickHIDAPI(*guid)) {
+            /* This is a HIDAPI device */
+            return s_pHIDAPIMapping;
+        }
 #if SDL_JOYSTICK_XINPUT
-    if (guid->data[14] == 'x') {
-        /* This is an XInput device */
-        return s_pXInputMapping;
-    }
+        if (SDL_IsJoystickXInput(*guid)) {
+            /* This is an XInput device */
+            return s_pXInputMapping;
+        }
 #endif
+    }
     return NULL;
 }
 
@@ -681,11 +683,10 @@ SDL_PrivateGameControllerParseControllerConfigString(SDL_GameController *gamecon
 /*
  * Make a new button mapping struct
  */
-static void SDL_PrivateLoadButtonMapping(SDL_GameController *gamecontroller, SDL_JoystickGUID guid, const char *pchName, const char *pchMapping)
+static void SDL_PrivateLoadButtonMapping(SDL_GameController *gamecontroller, const char *pchName, const char *pchMapping)
 {
     int i;
 
-    gamecontroller->guid = guid;
     gamecontroller->name = pchName;
     gamecontroller->num_bindings = 0;
     SDL_memset(gamecontroller->last_match_axis, 0, gamecontroller->joystick->naxes * sizeof(*gamecontroller->last_match_axis));
@@ -799,14 +800,16 @@ static void SDL_PrivateGameControllerRefreshMapping(ControllerMapping_t *pContro
 {
     SDL_GameController *gamecontrollerlist = SDL_gamecontrollers;
     while (gamecontrollerlist) {
-        if (!SDL_memcmp(&gamecontrollerlist->guid, &pControllerMapping->guid, sizeof(pControllerMapping->guid))) {
-            SDL_Event event;
-            event.type = SDL_CONTROLLERDEVICEREMAPPED;
-            event.cdevice.which = gamecontrollerlist->joystick->instance_id;
-            SDL_PushEvent(&event);
-
+        if (!SDL_memcmp(&gamecontrollerlist->joystick->guid, &pControllerMapping->guid, sizeof(pControllerMapping->guid))) {
             /* Not really threadsafe.  Should this lock access within SDL_GameControllerEventWatcher? */
-            SDL_PrivateLoadButtonMapping(gamecontrollerlist, pControllerMapping->guid, pControllerMapping->name, pControllerMapping->mapping);
+            SDL_PrivateLoadButtonMapping(gamecontrollerlist, pControllerMapping->name, pControllerMapping->mapping);
+
+            {
+                SDL_Event event;
+                event.type = SDL_CONTROLLERDEVICEREMAPPED;
+                event.cdevice.which = gamecontrollerlist->joystick->instance_id;
+                SDL_PushEvent(&event);
+            }
         }
 
         gamecontrollerlist = gamecontrollerlist->next;
@@ -836,7 +839,7 @@ SDL_PrivateAddMappingForGUID(SDL_JoystickGUID jGUID, const char *mappingString, 
         return NULL;
     }
 
-    pControllerMapping = SDL_PrivateGetControllerMappingForGUID(&jGUID);
+    pControllerMapping = SDL_PrivateGetControllerMappingForGUID(&jGUID, SDL_TRUE);
     if (pControllerMapping) {
         /* Only overwrite the mapping if the priority is the same or higher. */
         if (pControllerMapping->priority <= priority) {
@@ -1005,7 +1008,7 @@ static ControllerMapping_t *SDL_PrivateGetControllerMappingForNameAndGUID(const 
 {
     ControllerMapping_t *mapping;
 
-    mapping = SDL_PrivateGetControllerMappingForGUID(&guid);
+    mapping = SDL_PrivateGetControllerMappingForGUID(&guid, SDL_FALSE);
 #ifdef __LINUX__
     if (!mapping && name) {
         if (SDL_strstr(name, "Xbox 360 Wireless Receiver")) {
@@ -1024,7 +1027,7 @@ static ControllerMapping_t *SDL_PrivateGetControllerMappingForNameAndGUID(const 
         }
     }
 #ifdef __ANDROID__
-    if (!mapping) {
+    if (!mapping && name && !SDL_IsJoystickHIDAPI(guid)) {
         mapping = SDL_CreateMappingForAndroidController(name, guid);
     }
 #endif
@@ -1244,7 +1247,7 @@ char *
 SDL_GameControllerMappingForGUID(SDL_JoystickGUID guid)
 {
     char *pMappingString = NULL;
-    ControllerMapping_t *mapping = SDL_PrivateGetControllerMappingForGUID(&guid);
+    ControllerMapping_t *mapping = SDL_PrivateGetControllerMappingForGUID(&guid, SDL_FALSE);
     if (mapping) {
         char pchGUID[33];
         size_t needed;
@@ -1271,7 +1274,7 @@ SDL_GameControllerMapping(SDL_GameController * gamecontroller)
         return NULL;
     }
 
-    return SDL_GameControllerMappingForGUID(gamecontroller->guid);
+    return SDL_GameControllerMappingForGUID(gamecontroller->joystick->guid);
 }
 
 static void
@@ -1460,6 +1463,7 @@ SDL_bool SDL_ShouldIgnoreGameController(const char *name, SDL_JoystickGUID guid)
     int i;
     Uint16 vendor;
     Uint16 product;
+    Uint16 version;
     Uint32 vidpid;
 
     if (SDL_allowed_controllers.num_entries == 0 &&
@@ -1467,7 +1471,7 @@ SDL_bool SDL_ShouldIgnoreGameController(const char *name, SDL_JoystickGUID guid)
         return SDL_FALSE;
     }
 
-    SDL_GetJoystickGUIDInfo(guid, &vendor, &product, NULL);
+    SDL_GetJoystickGUIDInfo(guid, &vendor, &product, &version);
 
     if (SDL_GetHintBoolean("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD", SDL_FALSE)) {
         /* We shouldn't ignore Steam's virtual gamepad since it's using the hints to filter out the real controllers so it can remap input for the virtual controller */
@@ -1475,7 +1479,7 @@ SDL_bool SDL_ShouldIgnoreGameController(const char *name, SDL_JoystickGUID guid)
 #if defined(__LINUX__)
         bSteamVirtualGamepad = (vendor == 0x28DE && product == 0x11FF);
 #elif defined(__MACOSX__)
-        bSteamVirtualGamepad = (SDL_strncmp(name, "GamePad-", 8) == 0);
+        bSteamVirtualGamepad = (vendor == 0x045E && product == 0x028E && version == 1);
 #elif defined(__WIN32__)
         /* We can't tell on Windows, but Steam will block others in input hooks */
         bSteamVirtualGamepad = SDL_TRUE;
@@ -1579,7 +1583,7 @@ SDL_GameControllerOpen(int device_index)
         }
     }
 
-    SDL_PrivateLoadButtonMapping(gamecontroller, pSupportedController->guid, pSupportedController->name, pSupportedController->mapping);
+    SDL_PrivateLoadButtonMapping(gamecontroller, pSupportedController->name, pSupportedController->mapping);
 
     /* Add the controller to list */
     ++gamecontroller->ref_count;
@@ -1711,6 +1715,12 @@ SDL_GameControllerName(SDL_GameController * gamecontroller)
     } else {
         return gamecontroller->name;
     }
+}
+
+int
+SDL_GameControllerGetPlayerIndex(SDL_GameController *gamecontroller)
+{
+    return SDL_JoystickGetPlayerIndex(SDL_GameControllerGetJoystick(gamecontroller));
 }
 
 Uint16

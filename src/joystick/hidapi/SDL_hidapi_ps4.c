@@ -42,6 +42,10 @@
 #define SONY_DS4_DONGLE_PID 0x0BA0
 #define SONY_DS4_SLIM_PID   0x09CC
 
+#define RAZER_USB_VID       0x1532
+#define RAZER_PANTHERA_PID  0X0401
+#define RAZER_PANTHERA_EVO_PID  0x1008
+
 #define USB_PACKET_LENGTH   64
 
 #define VOLUME_CHECK_INTERVAL_MS    (10 * 1000)
@@ -107,6 +111,7 @@ typedef struct {
     SDL_bool is_dongle;
     SDL_bool is_bluetooth;
     SDL_bool audio_supported;
+    SDL_bool rumble_supported;
     Uint8 volume;
     Uint32 last_volume_check;
     Uint32 rumble_expiration;
@@ -135,8 +140,15 @@ static Uint32 crc32(Uint32 crc, const void *data, int count)
     return crc;
 }
 
-#ifdef __WIN32__
+#if defined(__WIN32__) && defined(HAVE_ENDPOINTVOLUME_H)
 #include "../../core/windows/SDL_windows.h"
+
+#ifndef NTDDI_VISTA
+#define NTDDI_VISTA    0x06000000
+#endif
+#ifndef _WIN32_WINNT_VISTA
+#define _WIN32_WINNT_VISTA 0x0600
+#endif
 
 /* Define Vista for the Audio related includes below to work */
 #undef NTDDI_VERSION
@@ -150,9 +162,9 @@ static Uint32 crc32(Uint32 crc, const void *data, int count)
 
 #undef DEFINE_GUID
 #define DEFINE_GUID(n,l,w1,w2,b1,b2,b3,b4,b5,b6,b7,b8) static const GUID n = {l,w1,w2,{b1,b2,b3,b4,b5,b6,b7,b8}}
-DEFINE_GUID(CLSID_MMDeviceEnumerator, 0xBCDE0395, 0xE52F, 0x467C, 0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E);
-DEFINE_GUID(IID_IMMDeviceEnumerator, 0xA95664D2, 0x9614, 0x4F35, 0xA7, 0x46, 0xDE, 0x8D, 0xB6, 0x36, 0x17, 0xE6);
-DEFINE_GUID(IID_IAudioEndpointVolume, 0x5CDF2C82, 0x841E, 0x4546, 0x97, 0x22, 0x0C, 0xF7, 0x40, 0x78, 0x22, 0x9A);
+DEFINE_GUID(SDL_CLSID_MMDeviceEnumerator, 0xBCDE0395, 0xE52F, 0x467C, 0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E);
+DEFINE_GUID(SDL_IID_IMMDeviceEnumerator, 0xA95664D2, 0x9614, 0x4F35, 0xA7, 0x46, 0xDE, 0x8D, 0xB6, 0x36, 0x17, 0xE6);
+DEFINE_GUID(SDL_IID_IAudioEndpointVolume, 0x5CDF2C82, 0x841E, 0x4546, 0x97, 0x22, 0x0C, 0xF7, 0x40, 0x78, 0x22, 0x9A);
 #endif
 
 
@@ -161,13 +173,13 @@ static float GetSystemVolume(void)
 {
     float volume = -1.0f;    /* Return this if we can't get system volume */
 
-#ifdef __WIN32__
+#if defined(__WIN32__) && defined(HAVE_ENDPOINTVOLUME_H)
     HRESULT hr = WIN_CoInitialize();
     if (SUCCEEDED(hr)) {
         IMMDeviceEnumerator *pEnumerator;
 
         /* This should gracefully fail on XP and succeed on everything Vista and above */
-        hr = CoCreateInstance(&CLSID_MMDeviceEnumerator, NULL, CLSCTX_ALL, &IID_IMMDeviceEnumerator, (LPVOID*)&pEnumerator);
+        hr = CoCreateInstance(&SDL_CLSID_MMDeviceEnumerator, NULL, CLSCTX_ALL, &SDL_IID_IMMDeviceEnumerator, (LPVOID*)&pEnumerator);
         if (SUCCEEDED(hr)) {
             IMMDevice *pDevice;
 
@@ -175,7 +187,7 @@ static float GetSystemVolume(void)
             if (SUCCEEDED(hr)) {
                 IAudioEndpointVolume *pEndpointVolume;
 
-                hr = IMMDevice_Activate(pDevice, &IID_IAudioEndpointVolume, CLSCTX_ALL, NULL, (LPVOID*)&pEndpointVolume);
+                hr = IMMDevice_Activate(pDevice, &SDL_IID_IAudioEndpointVolume, CLSCTX_ALL, NULL, (LPVOID*)&pEndpointVolume);
                 if (SUCCEEDED(hr)) {
                     IAudioEndpointVolume_GetMasterVolumeLevelScalar(pEndpointVolume, &volume);
                     IUnknown_Release(pEndpointVolume);
@@ -206,14 +218,8 @@ static uint8_t GetPlaystationVolumeFromFloat(float fVolume)
 }
 
 static SDL_bool
-HIDAPI_DriverPS4_IsSupportedDevice(Uint16 vendor_id, Uint16 product_id, int interface_number, Uint16 usage_page, Uint16 usage)
+HIDAPI_DriverPS4_IsSupportedDevice(Uint16 vendor_id, Uint16 product_id, Uint16 version, int interface_number)
 {
-    /* The Revolution Pro Controller exposes multiple interfaces on Windows */
-    const Uint16 NACON_USB_VID = 0x146b;
-    if (vendor_id == NACON_USB_VID && usage_page != 0 && usage_page != 1) {
-        return SDL_FALSE;
-    }
-
     return SDL_IsJoystickPS4(vendor_id, product_id);
 }
 
@@ -256,6 +262,16 @@ static SDL_bool CheckUSBConnected(hid_device *dev)
     return SDL_FALSE;
 }
 
+static SDL_bool HIDAPI_DriverPS4_CanRumble(Uint16 vendor_id, Uint16 product_id)
+{
+    /* The Razer Panthera fight stick hangs when trying to rumble */
+    if (vendor_id == RAZER_USB_VID &&
+        (product_id == RAZER_PANTHERA_PID || product_id == RAZER_PANTHERA_EVO_PID)) {
+        return SDL_FALSE;
+    }
+    return SDL_TRUE;
+}
+
 static int HIDAPI_DriverPS4_Rumble(SDL_Joystick *joystick, hid_device *dev, void *context, Uint16 low_frequency_rumble, Uint16 high_frequency_rumble, Uint32 duration_ms);
 
 static SDL_bool
@@ -290,6 +306,14 @@ HIDAPI_DriverPS4_Init(SDL_Joystick *joystick, hid_device *dev, Uint16 vendor_id,
         ctx->audio_supported = SDL_TRUE;
     }
 
+    if (HIDAPI_DriverPS4_CanRumble(vendor_id, product_id)) {
+        if (ctx->is_bluetooth) {
+            ctx->rumble_supported = SDL_GetHintBoolean(SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE, SDL_FALSE);
+        } else {
+            ctx->rumble_supported = SDL_TRUE;
+        }
+    }
+
     /* Initialize LED and effect state */
     HIDAPI_DriverPS4_Rumble(joystick, dev, ctx, 0, 0, 0);
 
@@ -308,6 +332,10 @@ HIDAPI_DriverPS4_Rumble(SDL_Joystick *joystick, hid_device *dev, void *context, 
     DS4EffectsState_t *effects;
     Uint8 data[78];
     int report_size, offset;
+
+    if (!ctx->rumble_supported) {
+        return SDL_Unsupported();
+    }
 
     /* In order to send rumble, we have to send a complete effect packet */
     SDL_memset(data, 0, sizeof(data));
@@ -479,7 +507,7 @@ HIDAPI_DriverPS4_HandleStatePacket(SDL_Joystick *joystick, hid_device *dev, SDL_
     SDL_memcpy(&ctx->last_state, packet, sizeof(ctx->last_state));
 }
 
-static void
+static SDL_bool
 HIDAPI_DriverPS4_Update(SDL_Joystick *joystick, hid_device *dev, void *context)
 {
     SDL_DriverPS4_Context *ctx = (SDL_DriverPS4_Context *)context;
@@ -509,6 +537,8 @@ HIDAPI_DriverPS4_Update(SDL_Joystick *joystick, hid_device *dev, void *context)
             HIDAPI_DriverPS4_Rumble(joystick, dev, context, 0, 0, 0);
         }
     }
+
+    return (size >= 0);
 }
 
 static void

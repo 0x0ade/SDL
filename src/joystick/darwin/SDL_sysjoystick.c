@@ -451,7 +451,7 @@ GetDeviceInfo(IOHIDDeviceRef hidDevice, recDevice *pDevice)
     }
 
 #ifdef SDL_JOYSTICK_HIDAPI
-    if (HIDAPI_IsDevicePresent(vendor, product)) {
+    if (HIDAPI_IsDevicePresent(vendor, product, version)) {
         /* The HIDAPI driver is taking care of this device */
         return 0;
     }
@@ -698,6 +698,12 @@ DARWIN_JoystickGetDeviceName(int device_index)
 {
     recDevice *device = GetDeviceForIndex(device_index);
     return device ? device->product : "UNKNOWN";
+}
+
+static int
+DARWIN_JoystickGetDevicePlayerIndex(int device_index)
+{
+    return -1;
 }
 
 static SDL_JoystickGUID
@@ -998,6 +1004,7 @@ SDL_JoystickDriver SDL_DARWIN_JoystickDriver =
     DARWIN_JoystickGetCount,
     DARWIN_JoystickDetect,
     DARWIN_JoystickGetDeviceName,
+    DARWIN_JoystickGetDevicePlayerIndex,
     DARWIN_JoystickGetDeviceGUID,
     DARWIN_JoystickGetDeviceInstanceID,
     DARWIN_JoystickOpen,

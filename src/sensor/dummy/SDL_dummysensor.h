@@ -18,20 +18,6 @@
      misrepresented as being the original software.
   3. This notice may not be removed or altered from any source distribution.
 */
-
-/*
-  Contributed by Brandon Schaefer, <brandon.schaefer@canonical.com>
-*/
-
-#ifndef SDL_mirevents_h_
-#define SDL_mirevents_h_
-
-#include <mir_toolkit/mir_client_library.h>
-
-extern void
-MIR_HandleEvent(MirWindow*, MirEvent const* ev, void* context);
-
-#endif /* SDL_mirevents_h_ */
+#include "SDL_config.h"
 
 /* vi: set ts=4 sw=4 expandtab: */
-

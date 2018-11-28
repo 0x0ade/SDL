@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.util.Arrays;
 import java.util.Hashtable;
 import java.lang.reflect.Method;
+import java.lang.Math;
 
 import android.app.*;
 import android.content.*;
@@ -53,6 +54,14 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     private static final int SDL_SYSTEM_CURSOR_NO = 10;
     private static final int SDL_SYSTEM_CURSOR_HAND = 11;
 
+    protected static final int SDL_ORIENTATION_UNKNOWN = 0;
+    protected static final int SDL_ORIENTATION_LANDSCAPE = 1;
+    protected static final int SDL_ORIENTATION_LANDSCAPE_FLIPPED = 2;
+    protected static final int SDL_ORIENTATION_PORTRAIT = 3;
+    protected static final int SDL_ORIENTATION_PORTRAIT_FLIPPED = 4;
+
+    protected static int mCurrentOrientation;
+
     // Handle the state of the native layer
     public enum NativeState {
            INIT, RESUMED, PAUSED
@@ -77,7 +86,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     protected static boolean mScreenKeyboardShown;
     protected static ViewGroup mLayout;
     protected static SDLClipboardHandler mClipboardHandler;
-    protected static Hashtable<Integer, Object> mCursors;
+    protected static Hashtable<Integer, PointerIcon> mCursors;
     protected static int mLastCursorID;
     protected static SDLGenericMotionListener_API12 mMotionListener;
     protected static HIDDeviceManager mHIDDeviceManager;
@@ -112,7 +121,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         } else {
             library = "libmain.so";
         }
-        return library;
+        return getContext().getApplicationInfo().nativeLibraryDir + "/" + library;
     }
 
     /**
@@ -145,7 +154,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     // Load the .so
     public void loadLibraries() {
        for (String lib : getLibraries()) {
-          System.loadLibrary(lib);
+          SDL.loadLibrary(lib);
        }
     }
 
@@ -167,7 +176,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         mTextEdit = null;
         mLayout = null;
         mClipboardHandler = null;
-        mCursors = new Hashtable<Integer, Object>();
+        mCursors = new Hashtable<Integer, PointerIcon>();
         mLastCursorID = 0;
         mSDLThread = null;
         mExitCalledFromJava = false;
@@ -182,8 +191,8 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     // Setup
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        Log.v(TAG, "Device: " + android.os.Build.DEVICE);
-        Log.v(TAG, "Model: " + android.os.Build.MODEL);
+        Log.v(TAG, "Device: " + Build.DEVICE);
+        Log.v(TAG, "Model: " + Build.MODEL);
         Log.v(TAG, "onCreate()");
         super.onCreate(savedInstanceState);
 
@@ -241,13 +250,17 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
             mClipboardHandler = new SDLClipboardHandler_Old();
         }
 
-        mHIDDeviceManager = new HIDDeviceManager(this);
+        mHIDDeviceManager = HIDDeviceManager.acquire(this);
 
         // Set up the surface
         mSurface = new SDLSurface(getApplication());
 
         mLayout = new RelativeLayout(this);
         mLayout.addView(mSurface);
+
+        // Get our current screen orientation and pass it down.
+        mCurrentOrientation = SDLActivity.getCurrentOrientation();
+        SDLActivity.onNativeOrientationChanged(mCurrentOrientation);
 
         setContentView(mLayout);
 
@@ -303,6 +316,32 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         SDLActivity.handleNativeState();
     }
 
+    public static int getCurrentOrientation() {
+        final Context context = SDLActivity.getContext();
+        final Display display = ((WindowManager) context.getSystemService(Context.WINDOW_SERVICE)).getDefaultDisplay();
+
+        int result = SDL_ORIENTATION_UNKNOWN;
+
+        switch (display.getRotation()) {
+            case Surface.ROTATION_0:
+                result = SDL_ORIENTATION_PORTRAIT;
+                break;
+    
+            case Surface.ROTATION_90:
+                result = SDL_ORIENTATION_LANDSCAPE;
+                break;
+    
+            case Surface.ROTATION_180:
+                result = SDL_ORIENTATION_PORTRAIT_FLIPPED;
+                break;
+    
+            case Surface.ROTATION_270:
+                result = SDL_ORIENTATION_LANDSCAPE_FLIPPED;
+                break;
+        }
+
+        return result;
+    }
 
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
@@ -341,7 +380,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         Log.v(TAG, "onDestroy()");
 
         if (mHIDDeviceManager != null) {
-            mHIDDeviceManager.close();
+            HIDDeviceManager.release(mHIDDeviceManager);
             mHIDDeviceManager = null;
         }
 
@@ -481,7 +520,9 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     /* The native thread has finished */
     public static void handleNativeExit() {
         SDLActivity.mSDLThread = null;
-        mSingleton.finish();
+        if (mSingleton != null) {
+            mSingleton.finish();
+        }
     }
 
 
@@ -542,7 +583,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
                                         View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
                                         View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
                                         View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
-                    					View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.INVISIBLE;
+                                        View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.INVISIBLE;
                             window.getDecorView().setSystemUiVisibility(flags);        
                             window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
                             window.clearFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
@@ -602,7 +643,61 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         Message msg = commandHandler.obtainMessage();
         msg.arg1 = command;
         msg.obj = data;
-        return commandHandler.sendMessage(msg);
+        boolean result = commandHandler.sendMessage(msg);
+
+        if ((Build.VERSION.SDK_INT >= 19) && (command == COMMAND_CHANGE_WINDOW_STYLE)) {
+            // Ensure we don't return until the resize has actually happened,
+            // or 500ms have passed.
+
+            boolean bShouldWait = false;
+            
+            if (data instanceof Integer) {
+                // Let's figure out if we're already laid out fullscreen or not.
+                Display display = ((WindowManager)getSystemService(Context.WINDOW_SERVICE)).getDefaultDisplay();
+                android.util.DisplayMetrics realMetrics = new android.util.DisplayMetrics();
+                display.getRealMetrics( realMetrics );
+        
+                boolean bFullscreenLayout = ((realMetrics.widthPixels == mSurface.getWidth()) && 
+                                             (realMetrics.heightPixels == mSurface.getHeight()));
+
+                if (((Integer)data).intValue() == 1) {
+                    // If we aren't laid out fullscreen or actively in fullscreen mode already, we're going
+                    // to change size and should wait for surfaceChanged() before we return, so the size
+                    // is right back in native code.  If we're already laid out fullscreen, though, we're
+                    // not going to change size even if we change decor modes, so we shouldn't wait for
+                    // surfaceChanged() -- which may not even happen -- and should return immediately.
+                    bShouldWait = !bFullscreenLayout;
+                }
+                else {
+                    // If we're laid out fullscreen (even if the status bar and nav bar are present),
+                    // or are actively in fullscreen, we're going to change size and should wait for
+                    // surfaceChanged before we return, so the size is right back in native code.
+                    bShouldWait = bFullscreenLayout;
+                }
+            }
+
+            if (bShouldWait) {
+                // We'll wait for the surfaceChanged() method, which will notify us
+                // when called.  That way, we know our current size is really the
+                // size we need, instead of grabbing a size that's still got
+                // the navigation and/or status bars before they're hidden.
+                //
+                // We'll wait for up to half a second, because some devices 
+                // take a surprisingly long time for the surface resize, but
+                // then we'll just give up and return.
+                //
+                synchronized(SDLActivity.getContext()) {
+                    try {
+                        SDLActivity.getContext().wait(500);
+                    }
+                    catch (InterruptedException ie) {
+                        ie.printStackTrace();
+                    }
+                }
+            }
+        }
+
+        return result;
     }
 
     // C functions we call
@@ -627,6 +722,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     public static native void onNativeSurfaceDestroyed();
     public static native String nativeGetHint(String name);
     public static native void nativeSetenv(String name, String value);
+    public static native void onNativeOrientationChanged(int orientation);
 
     /**
      * This method is called by SDL using JNI.
@@ -724,9 +820,14 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
             return false;
         }
 
-        // Samsung DeX mode doesn't support relative mice properly under Android 7 APIs,
-        // and simply returns no data under Android 8 APIs.
-        if (isDeXMode()) {
+        // DeX mode in Samsung Experience 9.0 and earlier doesn't support relative mice properly under 
+        // Android 7 APIs, and simply returns no data under Android 8 APIs.
+        //
+        // This is fixed in Samsung Experience 9.5, which corresponds to Android 8.1.0, and
+        // thus SDK version 27.  If we are in DeX mode and not API 27 or higher, as a result,
+        // we should stick to relative mode.
+        //
+        if ((Build.VERSION.SDK_INT < 27) && isDeXMode()) {
             return false;
         }
 
@@ -773,7 +874,27 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         if (Build.MANUFACTURER.equals("MINIX") && Build.MODEL.equals("NEO-U1")) {
             return true;
         }
+        if (Build.MANUFACTURER.equals("Amlogic") && Build.MODEL.equals("X96-W")) {
+            return true;
+        }
         return false;
+    }
+
+    /**
+     * This method is called by SDL using JNI.
+     */
+    public static boolean isTablet() {
+        DisplayMetrics metrics = new DisplayMetrics();
+        Activity activity = (Activity)getContext();
+        activity.getWindowManager().getDefaultDisplay().getMetrics(metrics);
+
+        double dWidthInches = metrics.widthPixels / (double)metrics.xdpi;
+        double dHeightInches = metrics.heightPixels / (double)metrics.ydpi;
+
+        double dDiagonal = Math.sqrt((dWidthInches * dWidthInches) + (dHeightInches * dHeightInches));
+
+        // If our diagonal size is seven inches or greater, we consider ourselves a tablet.
+        return (dDiagonal >= 7.0);
     }
 
     /**
@@ -1258,13 +1379,14 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     public static int createCustomCursor(int[] colors, int width, int height, int hotSpotX, int hotSpotY) {
         Bitmap bitmap = Bitmap.createBitmap(colors, width, height, Bitmap.Config.ARGB_8888);
         ++mLastCursorID;
-        // This requires API 24, so use reflection to implement this
-        try {
-            Class PointerIconClass = Class.forName("android.view.PointerIcon");
-            Class[] arg_types = new Class[] { Bitmap.class, float.class, float.class };
-            Method create = PointerIconClass.getMethod("create", arg_types);
-            mCursors.put(mLastCursorID, create.invoke(null, bitmap, hotSpotX, hotSpotY));
-        } catch (Exception e) {
+
+        if (Build.VERSION.SDK_INT >= 24) {
+            try {
+                mCursors.put(mLastCursorID, PointerIcon.create(bitmap, hotSpotX, hotSpotY));
+            } catch (Exception e) {
+                return 0;
+            }
+        } else {
             return 0;
         }
         return mLastCursorID;
@@ -1274,12 +1396,14 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
      * This method is called by SDL using JNI.
      */
     public static boolean setCustomCursor(int cursorID) {
-        // This requires API 24, so use reflection to implement this
-        try {
-            Class PointerIconClass = Class.forName("android.view.PointerIcon");
-            Method setPointerIcon = SDLSurface.class.getMethod("setPointerIcon", PointerIconClass);
-            setPointerIcon.invoke(mSurface, mCursors.get(cursorID));
-        } catch (Exception e) {
+
+        if (Build.VERSION.SDK_INT >= 24) {
+            try {
+                mSurface.setPointerIcon(mCursors.get(cursorID));
+            } catch (Exception e) {
+                return false;
+            }
+        } else {
             return false;
         }
         return true;
@@ -1328,15 +1452,12 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
             cursor_type = 1002; //PointerIcon.TYPE_HAND;
             break;
         }
-        // This requires API 24, so use reflection to implement this
-        try {
-            Class PointerIconClass = Class.forName("android.view.PointerIcon");
-            Class[] arg_types = new Class[] { Context.class, int.class };
-            Method getSystemIcon = PointerIconClass.getMethod("getSystemIcon", arg_types);
-            Method setPointerIcon = SDLSurface.class.getMethod("setPointerIcon", PointerIconClass);
-            setPointerIcon.invoke(mSurface, getSystemIcon.invoke(null, SDL.getContext(), cursor_type));
-        } catch (Exception e) {
-            return false;
+        if (Build.VERSION.SDK_INT >= 24) {
+            try {
+                mSurface.setPointerIcon(PointerIcon.getSystemIcon(SDL.getContext(), cursor_type));
+            } catch (Exception e) {
+                return false;
+            }
         }
         return true;
     }
@@ -1448,6 +1569,10 @@ class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
                                int format, int width, int height) {
         Log.v("SDL", "surfaceChanged()");
 
+        if (SDLActivity.mSingleton == null) {
+            return;
+        }
+
         int sdlFormat = 0x15151002; // SDL_PIXELFORMAT_RGB565 by default
         switch (format) {
         case PixelFormat.A_8:
@@ -1495,24 +1620,27 @@ class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
 
         mWidth = width;
         mHeight = height;
-		int nDeviceWidth = width;
-		int nDeviceHeight = height;
-		try
-		{
-			if ( android.os.Build.VERSION.SDK_INT >= 17 )
-			{
-				android.util.DisplayMetrics realMetrics = new android.util.DisplayMetrics();
-				mDisplay.getRealMetrics( realMetrics );
-				nDeviceWidth = realMetrics.widthPixels;
-				nDeviceHeight = realMetrics.heightPixels;
-			}
-		}
-		catch ( java.lang.Throwable throwable ) {}
+        int nDeviceWidth = width;
+        int nDeviceHeight = height;
+        try
+        {
+            if (Build.VERSION.SDK_INT >= 17) {
+                android.util.DisplayMetrics realMetrics = new android.util.DisplayMetrics();
+                mDisplay.getRealMetrics( realMetrics );
+                nDeviceWidth = realMetrics.widthPixels;
+                nDeviceHeight = realMetrics.heightPixels;
+            }
+        }
+        catch ( java.lang.Throwable throwable ) {}
 
-		Log.v("SDL", "Window size: " + width + "x" + height);
-		Log.v("SDL", "Device size: " + nDeviceWidth + "x" + nDeviceHeight);
+        synchronized(SDLActivity.getContext()) {
+            // In case we're waiting on a size change after going fullscreen, send a notification.
+            SDLActivity.getContext().notifyAll();
+        }
+
+        Log.v("SDL", "Window size: " + width + "x" + height);
+        Log.v("SDL", "Device size: " + nDeviceWidth + "x" + nDeviceHeight);
         SDLActivity.onNativeResize(width, height, nDeviceWidth, nDeviceHeight, sdlFormat, mDisplay.getRefreshRate());
-
 
         boolean skip = false;
         int requestedOrientation = SDLActivity.mSingleton.getRequestedOrientation();
@@ -1730,28 +1858,45 @@ class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
     @Override
     public void onSensorChanged(SensorEvent event) {
         if (event.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
+
+            // Since we may have an orientation set, we won't receive onConfigurationChanged events.
+            // We thus should check here.
+            int newOrientation = SDLActivity.SDL_ORIENTATION_UNKNOWN;
+    
             float x, y;
             switch (mDisplay.getRotation()) {
                 case Surface.ROTATION_90:
                     x = -event.values[1];
                     y = event.values[0];
+                    newOrientation = SDLActivity.SDL_ORIENTATION_LANDSCAPE;
                     break;
                 case Surface.ROTATION_270:
                     x = event.values[1];
                     y = -event.values[0];
+                    newOrientation = SDLActivity.SDL_ORIENTATION_LANDSCAPE_FLIPPED;
                     break;
                 case Surface.ROTATION_180:
                     x = -event.values[1];
                     y = -event.values[0];
+                    newOrientation = SDLActivity.SDL_ORIENTATION_PORTRAIT_FLIPPED;
                     break;
                 default:
                     x = event.values[0];
                     y = event.values[1];
+                    newOrientation = SDLActivity.SDL_ORIENTATION_PORTRAIT;
                     break;
             }
+
+            if (newOrientation != SDLActivity.mCurrentOrientation) {
+                SDLActivity.mCurrentOrientation = newOrientation;
+                SDLActivity.onNativeOrientationChanged(newOrientation);
+            }
+
             SDLActivity.onNativeAccel(-x / SensorManager.GRAVITY_EARTH,
                                       y / SensorManager.GRAVITY_EARTH,
                                       event.values[2] / SensorManager.GRAVITY_EARTH);
+
+            
         }
     }
 

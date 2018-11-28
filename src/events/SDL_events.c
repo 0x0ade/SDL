@@ -417,8 +417,10 @@ SDL_StartEventLoop(void)
     SDL_EventState(SDL_TEXTINPUT, SDL_DISABLE);
     SDL_EventState(SDL_TEXTEDITING, SDL_DISABLE);
     SDL_EventState(SDL_SYSWMEVENT, SDL_DISABLE);
+#if 0 /* Leave these events enabled so apps can respond to items being dragged onto them at startup */
     SDL_EventState(SDL_DROPFILE, SDL_DISABLE);
     SDL_EventState(SDL_DROPTEXT, SDL_DISABLE);
+#endif
 
     SDL_AtomicSet(&SDL_EventQ.active, 1);
 
@@ -654,6 +656,13 @@ SDL_PumpEvents(void)
     /* Check for joystick state change */
     if ((!SDL_disabled_events[SDL_JOYAXISMOTION >> 8] || SDL_JoystickEventState(SDL_QUERY))) {
         SDL_JoystickUpdate();
+    }
+#endif
+
+#if !SDL_SENSOR_DISABLED
+    /* Check for sensor state change */
+    if (!SDL_disabled_events[SDL_SENSORUPDATE >> 8]) {
+        SDL_SensorUpdate();
     }
 #endif
 
